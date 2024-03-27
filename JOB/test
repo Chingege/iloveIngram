@@ -1,6 +1,0 @@
-            batchHelper.executeBatch(updateFlowList, OmWlFlowTrackHisMapper.class,
-                    OmWlFlowTrackHisMapper::updateTrackHis);
-
-
-
-注入mapper                 batchHelper.executeBatch(groupTouchCheckCoopMapper, "insertTouchCheckCoop", groupTouchCheckList);
