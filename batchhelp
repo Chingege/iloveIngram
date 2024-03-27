@@ -1,0 +1,132 @@
+
+
+package com.huawei.esop.common.util.batch;
+
+import com.huawei.esop.common.exception.CommonException;
+import com.huawei.esop.common.retcode.SystemRetCode;
+
+import lombok.extern.slf4j.Slf4j;
+
+import org.apache.ibatis.session.ExecutorType;
+import org.apache.ibatis.session.SqlSession;
+import org.mybatis.spring.SqlSessionTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Locale;
+import java.util.function.BiConsumer;
+
+/**
+ * 批量处理助手
+ *
+ * @author cwx246028
+ * @since 2018-04-30
+ */
+@Component
+@Slf4j
+@ConditionalOnClass({ SqlSessionTemplate.class })
+public class BatchHelper {
+    @Value("${mybatis.batch.size:2000}")
+    private int batchSize;
+
+    @Autowired
+    private SqlSessionTemplate sqlSessionTemplate;
+
+    /**
+     * 【推荐使用】批量操作数据库（有错误日志、返回CommonException业务异常）
+     *
+     * @param data 数据列表
+     * @param mapperClass Mapper类
+     * @param consumer 消费者，具体的Mapper接口
+     * @param errorMsg 错误信息
+     * @param <T> T泛型
+     * @param <M> M泛型
+     */
+    @Transactional(propagation = Propagation.SUPPORTS)
+    public <T, M> void executeBatch(List<T> data, Class<M> mapperClass, BiConsumer<M, T> consumer, String errorMsg) {
+        executeBatch(data, mapperClass, consumer, errorMsg, false);
+    }
+
+    /**
+     * 【推荐使用（需要原异常信息的场景）】批量操作数据库（有错误日志、返回CommonException业务异常，业务异常可带上原异常信息）
+     *
+     * @param data 数据列表
+     * @param mapperClass Mapper类
+     * @param consumer 消费者，具体的Mapper接口
+     * @param errorMsg 错误信息
+     * @param needSrcException 业务异常是否需要带上原异常信息
+     * @param <T> T泛型
+     * @param <M> M泛型
+     * @throws CommonException 业务异常
+     */
+    @Transactional(propagation = Propagation.SUPPORTS)
+    public <T, M> void executeBatch(List<T> data, Class<M> mapperClass, BiConsumer<M, T> consumer,
+        String errorMsg, boolean needSrcException) throws CommonException {
+        try {
+            executeBatch(data, mapperClass, consumer);
+        } catch (Exception ex) {
+            log.error(String.format(Locale.ROOT, "ErrorMsg: %s, exception: ", errorMsg), ex);
+            String exMsg = errorMsg;
+            if (needSrcException) {
+                exMsg = errorMsg + ex.getMessage();
+            }
+            throw new CommonException(SystemRetCode.ERR_SERVICE_HANDLE, exMsg);
+        }
+    }
+
+    /**
+     * 【推荐使用（仅记日志，不抛异常）】批量操作数据库（有错误日志、不返回CommonException业务异常）
+     *
+     * @param data 数据列表
+     * @param mapperClass Mapper类
+     * @param consumer 消费者，具体的Mapper接口
+     * @param errorMsg 错误信息
+     * @param <T> T泛型
+     * @param <M> M泛型
+     */
+    @Transactional(propagation = Propagation.SUPPORTS)
+    public <T, M> void executeBatchNonException(List<T> data, Class<M> mapperClass, BiConsumer<M, T> consumer,
+        String errorMsg) {
+        try {
+            executeBatch(data, mapperClass, consumer);
+        } catch (Exception ex) {
+            log.error(String.format(Locale.ROOT, "ErrorMsg: %s, exception: ", errorMsg), ex);
+        }
+    }
+
+    /**
+     * 【不推荐使用，因为无日志，无业务异常】批量操作数据库（无错误日志、不返回CommonException业务异常）
+     *
+     * @param data data
+     * @param mapperClass mapperClass
+     * @param consumer consumer
+     * @param <T> dateType
+     * @param <M> mapperType
+     */
+    @Transactional(propagation = Propagation.SUPPORTS)
+    public <T, M> void executeBatch(List<T> data, Class<M> mapperClass, BiConsumer<M, T> consumer) {
+        if (data == null || data.isEmpty()) {
+            return;
+        }
+
+        // 启用批量模式
+        SqlSession sqlSession = sqlSessionTemplate.getSqlSessionFactory().openSession(ExecutorType.BATCH);
+
+        // 获取需要执行的方法
+        final M mapper = sqlSession.getMapper(mapperClass);
+        int count = 0;
+        for (T obj : data) {
+            consumer.accept(mapper, obj);
+            if (++count == batchSize) {
+                sqlSession.flushStatements();
+                count = 0;
+            }
+        }
+        sqlSession.flushStatements();
+    }
+}
